@@ -104,6 +104,7 @@ class DeermaHumidifier : public Component, public UARTDevice {
   }
 
 
+
  protected:
   // буфер для входящих данных
   char rx_buf_[255]{};
@@ -243,6 +244,7 @@ class DeermaHumidifier : public Component, public UARTDevice {
     {
     case 1:
       mode_select->publish_state("low");
+	  ESP_LOGD("logging", "Set_HumiValue %d", value);
       break;
 	case 2:
       mode_select->publish_state("medium");
@@ -262,6 +264,7 @@ class DeermaHumidifier : public Component, public UARTDevice {
    void process_set_humidity_(uint8_t  value){
 	if (this->humidity_setpoint) {
 	  this->humidity_setpoint->publish_state(value);
+	  
 	}
   }
 };

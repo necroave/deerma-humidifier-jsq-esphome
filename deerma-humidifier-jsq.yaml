@@ -111,6 +111,18 @@ select:
       - medium
       - high
       - Humidity
+    on_value:
+      then:
+        lambda: !lambda |-
+          if (strcmp(x.c_str(), "low") == 0) {
+            cast(id(humidifier)).set_humidity_setpoint(1);
+          } else if (strcmp(x.c_str(), "medium") == 0) {
+            cast(id(humidifier)).set_humidity_setpoint(2);
+          } else if (strcmp(x.c_str(), "high") == 0) {
+            cast(id(humidifier)).set_humidity_setpoint(3);
+          } else if (strcmp(x.c_str(), "Humidity") == 0) {
+            cast(id(humidifier)).set_humidity_setpoint(4);
+          }
 
 number:
   - platform: template
