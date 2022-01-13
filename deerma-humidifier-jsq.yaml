@@ -1,0 +1,123 @@
+substitutions:
+  # main prefix for all entities
+  name: "Humidifier"
+  # name of your node
+  node_name: "deerma-humidifier-jsq"
+
+esphome:
+  name: $node_name
+  platform: ESP8266
+  board: esp8285
+  includes:
+    - deerma_humidifier.h
+
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+  password: !secret ha_passwd
+ota:
+  password: !secret ha_passwd
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_passwd
+  fast_connect: true
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "$name Fallback Hotspot"
+    password: !secret ha_passwd
+
+
+web_server:
+  port: 80
+
+captive_portal:
+
+uart:
+  id: humidifier_uart
+  tx_pin: TX
+  rx_pin: RX
+  baud_rate: 9600
+
+custom_component:
+  lambda: |-
+    auto dh = new DeermaHumidifier(id(humidifier_uart));
+    dh->power = id(power);
+    dh->led  = id(led_enabled);
+    dh->buzzer = id(sound_enabled);
+    dh->tank_empty = id(tank_status);
+    dh->tank_installed = id(tank_installed);
+    dh->humidity_sensor_ = id(humidity_sensor);
+    dh->temperature_sensor_ = id(temperature_sensor);
+    dh->mode_select = id(mode_select);
+    dh->humidity_setpoint = id(humidity_set);
+    return {dh};
+  components:
+    - id: humidifier
+
+binary_sensor:
+  - platform: template
+    name: "Water Status"
+    id: tank_status
+    icon: mdi:chart-waterfall
+  - platform: template
+    name: "Tank Status"
+    id: tank_installed
+    icon: mdi:cup-water
+
+sensor:
+  - platform: template
+    name: "$name Temperature"
+    id: temperature_sensor
+  - platform: template
+    name: "$name Humidity"
+    id: humidity_sensor
+    
+switch:
+  - platform: template
+    id: power
+    name: "$name State"
+    icon: mdi:toggle-switch
+    turn_on_action:
+      - lambda: cast(id(humidifier)).set_power_state(true);
+    turn_off_action:
+      - lambda: cast(id(humidifier)).set_power_state(false);
+  - platform: template
+    id: led_enabled
+    name: "$name Led"
+    icon: mdi:led-variant-on
+    turn_on_action:
+      - lambda: cast(id(humidifier)).set_led_state(true);
+    turn_off_action:
+      - lambda: cast(id(humidifier)).set_led_state(false);
+  - platform: template
+    id: sound_enabled
+    name: "$name Sound"
+    icon: mdi:volume-high
+    turn_on_action:
+      - lambda: cast(id(humidifier)).set_sound_state(true);
+    turn_off_action:
+      - lambda: cast(id(humidifier)).set_sound_state(false);
+      
+select:
+  - platform: template
+    name: "$name Working Mode"
+    optimistic: true
+    id: mode_select
+    options:
+      - low
+      - medium
+      - high
+      - Humidity
+
+number:
+  - platform: template
+    name: "$name Set Humidity"
+    id: humidity_set
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 10      
+    
