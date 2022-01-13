@@ -73,8 +73,8 @@ class DeermaHumidifier : public Component, public UARTDevice {
   Switch *buzzer{};
   BinarySensor *tank_empty{};
   BinarySensor *tank_installed{};
-  Sensor *temperature_sensor_{};
-  Sensor *humidity_sensor_{};
+  Sensor *temperature_sensor{};
+  Sensor *humidity_sensor{};
   Select *mode_select;
   Number *humidity_setpoint{};
   
@@ -82,27 +82,44 @@ class DeermaHumidifier : public Component, public UARTDevice {
 //Setting power state
   void set_power_state(bool state) {
 	  this->message_queue_.push(str_sprintf("Set_OnOff %u", state ? 1 : 0));
-      ESP_LOGD("logging", "Set_OnOff %u", ONOFF(state)); 
+      ESP_LOGD("logging", "Set_OnOff %u", state ? 1 : 0); 
   }
 //Setting Led state  
   void set_led_state(bool state) { 
        this->message_queue_.push(str_sprintf("SetLedState %u", state ? 1 : 0)); 
-       ESP_LOGD("logging", "SetLedState %u", ONOFF(state));
+       ESP_LOGD("logging", "SetLedState %u", state ? 1 : 0);
   }
 //Setting sound state
   void set_sound_state(bool state) {
   	  this->message_queue_.push(str_sprintf("SetTipSound_Status %u", state ? 1 : 0)); 
-	  ESP_LOGD("logging", "SetTipSound_Status %u", ONOFF(state));
+	  ESP_LOGD("logging", "SetTipSound_Status %u", state ? 1 : 0);
   }
-//Set up temperature and humidity sensors
-  void set_temperature_sensor(sensor::Sensor *temperature_sensor) { temperature_sensor_ = temperature_sensor; }
-  void set_humidity_sensor(sensor::Sensor *humidity_sensor) { humidity_sensor_ = humidity_sensor; }
-//Humidity set target point
-  void set_humidity_setpoint(uint8_t  state) {
-	  this->message_queue_.push(str_sprintf("Set_HumiValue %d", state)); 
-	  ESP_LOGD("logging", "Set_HumiValue %d", state);
+//Humidifier mode
+  void set_humidity_setpoint(int  state) {
+	  this->message_queue_.push(str_sprintf("Set_HumidifierGears %u", state)); 
+	  ESP_LOGD("logging", "Set_HumidifierGears %u", state);
   }
-
+//test
+  void set_humidifier_mode(const char *state) {
+    if (strcmp(state, "low") == 0) {
+	message_queue_.push(str_sprintf("Set_HumidifierGears 1"));
+	ESP_LOGD("logging", "Set_HumidifierGears 1");
+	} else if (strcmp(state, "medium") == 0) {
+	message_queue_.push(str_sprintf("Set_HumidifierGears 2"));
+	ESP_LOGD("logging", "Set_HumidifierGears 2");	
+	} else if (strcmp(state, "high") == 0) {
+	message_queue_.push(str_sprintf("Set_HumidifierGears 3"));
+	ESP_LOGD("logging", "Set_HumidifierGears 3");	
+	} else if (strcmp(state, "Humidity") == 0) {
+	message_queue_.push(str_sprintf("Set_HumidifierGears 4"));
+	ESP_LOGD("logging", "Set_HumidifierGears 4");	
+	}
+  }  
+//terget humidity
+  void set_humidity_target(int  state) {
+	  this->message_queue_.push(str_sprintf("Set_HumiValue %u", state)); 
+	  ESP_LOGD("logging", "Set_HumiValue %u", state);
+  }
 
 
  protected:
@@ -228,14 +245,14 @@ class DeermaHumidifier : public Component, public UARTDevice {
 	}
   }  
  //Sensors:
-  void process_current_temperature_(float value){
-	if (this->temperature_sensor_) {
-	  this->temperature_sensor_->publish_state(value);
+  void process_current_temperature_(int value){
+	if (this->temperature_sensor) {
+	  this->temperature_sensor->publish_state(value);
 	}
   } 
-  void process_current_humidity_(float value){
-	if (this->humidity_sensor_) {
-	  this->humidity_sensor_->publish_state(value);
+  void process_current_humidity_(int value){
+	if (this->humidity_sensor) {
+	  this->humidity_sensor->publish_state(value);
 	}
   }  
  //Target mode
@@ -261,10 +278,9 @@ class DeermaHumidifier : public Component, public UARTDevice {
     }
   }
  //Humidity target value
-   void process_set_humidity_(uint8_t  value){
+   void process_set_humidity_(int  value){
 	if (this->humidity_setpoint) {
 	  this->humidity_setpoint->publish_state(value);
-	  
 	}
   }
 };
