@@ -3,286 +3,277 @@
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/components/switch/switch.h"
-#include "esphome/components/binary_sensor/binary_sensor.h"
+//#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
-#include "esphome/components/select/select.h"
-#include "esphome/components/number/number.h"
+//#include "esphome/components/select/select.h"
+//#include "esphome/components/number/number.h"
+#include "esphome/core/helpers.h"
 
 #include <queue>
 
 using namespace esphome;
 using namespace esphome::uart;
 using namespace esphome::switch_;
-using namespace esphome::binary_sensor;
-using namespace esphome::sensor;
-using namespace esphome::select;
-using namespace esphome::number;
-
-#define MSG_PROPS "props "
-#define MSG_GET_DOWN "get_down"
-#define MSG_NET "net"
-#define MSG_RESTORE "restore"
-#define MSG_MCU_VERSION "mcu_version"
-#define MSG_MODEL "model"
-#define MSG_EVENT "event"
-#define MSG_RESULT "result"
-//switches
-#define PROP_ONOFF_STATE "OnOff_State "
-#define PROP_LED_ENABLED "Led_State "
-#define PROP_SOUND_ENABLED "TipSound_State "
-//state mode
-#define PROP_HUMIDIFIER_GEAR "Humidifier_Gear "
-//Binary sensors:
-#define PROP_WATER_TANK_EMPTY "waterstatus "
-#define PROP_WATER_TANK_INSTALLED "watertankstatus "
-//Sensors:
-#define PROP_CURRENT_TEMPERATURE "TemperatureValue " 
-#define PROP_CURRENT_HUMIDITY "Humidity_Value "
-//humidity set value
-#define PROP_HUM_TARGET "HumiSet_Value "
+//using namespace esphome::binary_sensor;
+//using namespace esphome::sensor;
+//using namespace esphome::select;
+//using namespace esphome::number;
 
 
 class DeermaHumidifier : public Component, public UARTDevice {
  public:
   explicit DeermaHumidifier(UARTComponent *uart) : UARTDevice(uart){};
-
+  
   void setup() override { this->send_network_status(); }
-
-  void loop() override {
-    while (this->available()) {
-      uint8_t ch;
-      // читаем из uart побайтово
-      if (this->read_byte(&ch)) {
-        // проверяем достигнут ли конец строки '\r'
-        if (ch == '\r') {
-          this->rx_buf_[this->rx_pos_] = 0;
-          // переходим к обработке
-          this->process_();
-          // сбрасываем счетчик байтов входящего буфера
-          this->rx_pos_ = 0;
-        } else {
-          // дописываем прочитаный баййт во входящий буфер и увеличиваем счетчик
-          this->rx_buf_[this->rx_pos_++] = ch;
-        }
-      }
-    }
-  }
-
+  
+  void loop() override { handleUart(); }
+  
+//Declare substitutions:
+  //switches:
   Switch *power{};
   Switch *led{};
-  Switch *buzzer{};
-  BinarySensor *tank_empty{};
-  BinarySensor *tank_installed{};
+  Switch *tip_sound{};
+  //sensors:
   Sensor *temperature_sensor{};
   Sensor *humidity_sensor{};
-  Select *mode_select;
-  Number *humidity_setpoint{};
+  //binary_sensors:
+  BinarySensor *tank_empty{};
+  BinarySensor *tank_installed{};
   
-  void send_network_status() { this->message_queue_.push("MIIO_net_change cloud"); }
-//Setting power state
-  void set_power_state(bool state) {
-	  this->message_queue_.push(str_sprintf("Set_OnOff %u", state ? 1 : 0));
-      ESP_LOGD("logging", "Set_OnOff %u", state ? 1 : 0); 
+  void send_network_status() { 
+   queueDownstreamMessage("MIIO_net_change cloud"); 
+   //Dirty hack to obtain humidifier data
+   queueDownstreamMessage("Set_OnOff 0");
   }
-//Setting Led state  
-  void set_led_state(bool state) { 
-       this->message_queue_.push(str_sprintf("SetLedState %u", state ? 1 : 0)); 
-       ESP_LOGD("logging", "SetLedState %u", state ? 1 : 0);
-  }
-//Setting sound state
-  void set_sound_state(bool state) {
-  	  this->message_queue_.push(str_sprintf("SetTipSound_Status %u", state ? 1 : 0)); 
-	  ESP_LOGD("logging", "SetTipSound_Status %u", state ? 1 : 0);
-  }
-//Humidifier mode
-  void set_humidity_setpoint(int  state) {
-	  this->message_queue_.push(str_sprintf("Set_HumidifierGears %u", state)); 
-	  ESP_LOGD("logging", "Set_HumidifierGears %u", state);
-  }
-//test
-  void set_humidifier_mode(const char *state) {
-    if (strcmp(state, "low") == 0) {
-	message_queue_.push(str_sprintf("Set_HumidifierGears 1"));
-	ESP_LOGD("logging", "Set_HumidifierGears 1");
-	} else if (strcmp(state, "medium") == 0) {
-	message_queue_.push(str_sprintf("Set_HumidifierGears 2"));
-	ESP_LOGD("logging", "Set_HumidifierGears 2");	
-	} else if (strcmp(state, "high") == 0) {
-	message_queue_.push(str_sprintf("Set_HumidifierGears 3"));
-	ESP_LOGD("logging", "Set_HumidifierGears 3");	
-	} else if (strcmp(state, "Humidity") == 0) {
-	message_queue_.push(str_sprintf("Set_HumidifierGears 4"));
-	ESP_LOGD("logging", "Set_HumidifierGears 4");	
+
+  static const int DOWNSTREAM_QUEUE_SIZE = 50;
+  static const int DOWNSTREAM_QUEUE_ELEM_SIZE = 51;
+  char downstreamQueue[DOWNSTREAM_QUEUE_SIZE][DOWNSTREAM_QUEUE_ELEM_SIZE];
+  int downstreamQueueIndex = -1;
+  char nextDownstreamMessage[DOWNSTREAM_QUEUE_ELEM_SIZE];
+  boolean shouldUpdateState = false;
+  char serialRxBuf[255];
+  char serialTxBuf[255];
+  uint8_t mqttRetryCounter = 0;
+
+//Setting States of Humidifier
+//Power status  
+ void set_power_state(bool state) {
+	if ( state == true ) {
+		queueDownstreamMessage("Set_OnOff 1");
+	} else {
+		queueDownstreamMessage("Set_OnOff 0");
 	}
-  }  
-//terget humidity
-  void set_humidity_target(int  state) {
-	  this->message_queue_.push(str_sprintf("Set_HumiValue %u", state)); 
-	  ESP_LOGD("logging", "Set_HumiValue %u", state);
-  }
+ }
+// LED status 
+ void set_led_state(bool state) {
+	if ( state == true ) {
+		queueDownstreamMessage("SetLedState 1");
+	} else {
+		queueDownstreamMessage("SetLedState 0");
+	}
+ } 
+//Tip Sound
+ void set_sound_state(bool state) {
+	if ( state == true ) {
+		queueDownstreamMessage("SetTipSound_Status 1");
+	} else {
+		queueDownstreamMessage("SetTipSound_Status 0");
+	}
+ }
 
-
- protected:
-  // буфер для входящих данных
-  char rx_buf_[255]{};
-  // счетчик входящих байт
-  int rx_pos_{};
-  // очередь сообщений
-  std::queue<std::string> message_queue_;
-
-  // обработка входящего буфера
-  void process_() {
-    if (std::strncmp(this->rx_buf_, MSG_PROPS, sizeof(MSG_PROPS) - 1) == 0) {
-      this->process_props_(this->rx_buf_ + sizeof(MSG_PROPS) - 1);
-    } else if (std::strncmp(this->rx_buf_, MSG_GET_DOWN, sizeof(MSG_GET_DOWN) - 1) == 0) {
-      this->process_down_();
-    } else if (std::strncmp(this->rx_buf_, MSG_NET, sizeof(MSG_NET) - 1) == 0) {
-      this->process_net_();
-    } else if (std::strncmp(this->rx_buf_, MSG_RESTORE, sizeof(MSG_RESTORE) - 1) == 0) {
-      this->process_restore_();
-    } else if (std::strncmp(this->rx_buf_, MSG_MCU_VERSION, sizeof(MSG_MCU_VERSION) - 1) == 0) {
-      this->process_version_();
-    } else if (std::strncmp(this->rx_buf_, MSG_MODEL, sizeof(MSG_MODEL) - 1) == 0) {
-      this->process_model_();
-    } else if (std::strncmp(this->rx_buf_, MSG_EVENT, sizeof(MSG_EVENT) - 1) == 0) {
-      this->process_event_();
-    } else if (std::strncmp(this->rx_buf_, MSG_RESULT, sizeof(MSG_RESULT) - 1) == 0) {
-      this->process_result_();
-    } else {
-      this->process_unknown_();
-    }
-  }
-
-  void process_props_(const char *props) {
-    if (std::strncmp(props, PROP_ONOFF_STATE, sizeof(PROP_ONOFF_STATE) - 1) == 0) {
-      this->process_onoff_state_(atoi(props + sizeof(PROP_ONOFF_STATE) - 1) != 0);
-    } else if (std::strncmp(props, PROP_HUMIDIFIER_GEAR, sizeof(PROP_HUMIDIFIER_GEAR) - 1) == 0) {
-      this->process_humidifier_gear_(atoi(props + sizeof(PROP_HUMIDIFIER_GEAR) - 1));
-    } else if (std::strncmp(props, PROP_WATER_TANK_EMPTY, sizeof(PROP_WATER_TANK_EMPTY) -1) == 0) {
-	  this->process_water_tank_empty_(atoi(props + sizeof(PROP_WATER_TANK_EMPTY) - 1));
-    } else if (std::strncmp(props, PROP_WATER_TANK_INSTALLED, sizeof(PROP_WATER_TANK_INSTALLED) -1) == 0) {
-	  this->process_water_tank_status_(atoi(props + sizeof(PROP_WATER_TANK_INSTALLED) - 1));
-    } else if (std::strncmp(props, PROP_LED_ENABLED, sizeof(PROP_LED_ENABLED) - 1) == 0) {
-      this->process_led_enabled_(atoi(props + sizeof(PROP_LED_ENABLED) - 1) == 0);
-    } else if (std::strncmp(props, PROP_SOUND_ENABLED, sizeof(PROP_SOUND_ENABLED) - 1) == 0) {
-      this->process_sound_enabled_(atoi(props + sizeof(PROP_SOUND_ENABLED) - 1) == 0);
-    } else if (std::strncmp(props, PROP_CURRENT_TEMPERATURE, sizeof(PROP_CURRENT_TEMPERATURE) - 1) == 0) {
-      this->process_current_temperature_(atoi(props + sizeof(PROP_CURRENT_TEMPERATURE) - 1) == 0);
-    } else if (std::strncmp(props, PROP_CURRENT_HUMIDITY, sizeof(PROP_CURRENT_HUMIDITY) - 1) == 0) {
-      this->process_current_humidity_(atoi(props + sizeof(PROP_CURRENT_HUMIDITY) - 1) == 0);
-    } else if (std::strncmp(props, PROP_HUM_TARGET, sizeof(PROP_HUM_TARGET) - 1) == 0) {
-      this->process_set_humidity_(atoi(props + sizeof(PROP_HUM_TARGET) - 1) == 0);
-    }
-	
-    // здесь продолжаем обрабатывать остальные значения PROP_
-
-    this->write_str("ok\r");
-    this->flush();
-  }
-
-  void process_down_() {
-    this->write_str("down ");
-    if (this->message_queue_.empty()) {
-      this->write_str("none");
-    } else {
-      this->write_str(this->message_queue_.front().c_str());
-      this->message_queue_.pop();
-    }
-    this->write_str("\r");
-    this->flush();
-  }
-
-  void process_net_() {
-    this->write_str("cloud\r");
-    this->flush();
-  }
-
-  void process_version_() {
-    this->write_str("ok\r");
-    this->flush();
-  }
-
-  void process_model_() {
-    this->write_str("ok\r");
-    this->flush();
-  }
-
-  void process_restore_() {}
-
-  void process_event_() {}
-
-  void process_result_() {}
-
-  void process_unknown_() {
-    // здесь обрабатываем непредвиденное сообщение в буфере
-    // например, можно залогировать
-  }
-//switches:
+// protected:
+//  int rx_pos_{};
+//  char rx_buf_[255]{};
+//  std::queue<std::string> message_queue_;
+  
+// UART parser procedures
+ void clearRxBuf() {
+   //Clear everything for the next message
+   memset(serialRxBuf, 0, sizeof(serialRxBuf));
+ }
+// UART parser procedures
+ void clearTxBuf() {
+   //Clear everything for the next message
+   memset(serialTxBuf, 0, sizeof(serialTxBuf));
+ }
+// UART parser procedures 
+ void clearDownstreamQueueAtIndex(int index) {
+   memset(downstreamQueue[index], 0, sizeof(downstreamQueue[index]));
+ }
+// UART parser procedures 
+ void queueDownstreamMessage(char *message) {
+   if (downstreamQueueIndex >= DOWNSTREAM_QUEUE_SIZE - 1) {
+     //Serial.print("Error: Queue is full. Dropping message:");
+     //Serial.println(message);
+ 
+     return;
+   } else {
+     downstreamQueueIndex++;
+ 
+     snprintf(downstreamQueue[downstreamQueueIndex], sizeof(downstreamQueue[downstreamQueueIndex]), "%s", message);
+   }
+ }
+// UART parser procedures 
+ void fillNextDownstreamMessage() {
+   memset(nextDownstreamMessage, 0, sizeof(nextDownstreamMessage));
+ 
+   if (downstreamQueueIndex < 0) {
+     snprintf(nextDownstreamMessage, DOWNSTREAM_QUEUE_ELEM_SIZE, "none");
+ 
+   } else if (downstreamQueueIndex == 0) {
+     snprintf(nextDownstreamMessage, DOWNSTREAM_QUEUE_ELEM_SIZE, downstreamQueue[0]);
+     clearDownstreamQueueAtIndex(0);
+     downstreamQueueIndex--;
+ 
+   } else {
+     /**
+        This could be solved in a better way using less cycles, however, the queue should usually be mostly empty so this shouldn't matter much
+     */
+ 
+     snprintf(nextDownstreamMessage, DOWNSTREAM_QUEUE_ELEM_SIZE, downstreamQueue[0]);
+ 
+     for (int i = 0; i < downstreamQueueIndex; i++) {
+       snprintf(downstreamQueue[i], DOWNSTREAM_QUEUE_ELEM_SIZE, downstreamQueue[i + 1]);
+     }
+ 
+     clearDownstreamQueueAtIndex(downstreamQueueIndex);
+     downstreamQueueIndex--;
+   }
+ }
+ 
+//UART parser from humidifier MCU
+ void handleUart() {
+   if (Serial.available()) {
+     Serial.readBytesUntil('\r', serialRxBuf, 250);
+ 
+     char propName[30]; //30 chars for good measure
+     int propValue;
+ 
+     int sscanfResultCount;
+ 
+ 
+     sscanfResultCount = sscanf(serialRxBuf, "props %s %d", propName, &propValue);
+ 
+     if (sscanfResultCount == 2) {
+       shouldUpdateState = true;
+ 
+       if (strcmp(propName, "OnOff_State") == 0) {
+ 		//ESP_LOGD("setting", "OnOff_State %u", (boolean)propValue);
+		process_onoff_state_((boolean)propValue);
+        //ON-OFF state processing
+       } else if (strcmp(propName, "Humidifier_Gear") == 0) {
+ 		ESP_LOGD("logging", "Humidifier_Gear %u", (int)propValue);
+         //state.mode = (humMode_t)propValue;
+       } else if (strcmp(propName, "HumiSet_Value") == 0) {
+ 		ESP_LOGD("logging", "HumiSet_Value %u", (int)propValue);
+         //state.humiditySetpoint = propValue;
+       } else if (strcmp(propName, "Humidity_Value") == 0) {
+ 		//ESP_LOGD("setting", "Humidity_Value %u", (int)propValue);
+		humidity_sensor->publish_state((int)propValue);
+         //Humidity Value processing
+       } else if (strcmp(propName, "TemperatureValue") == 0) {
+ 		//ESP_LOGD("setting", "TemperatureValue %u", (int)propValue);
+		temperature_sensor->publish_state((int)propValue);
+         //Temperature value processing
+       } else if (strcmp(propName, "TipSound_State") == 0) {
+ 		//ESP_LOGD("setting", "TipSound_State %u", (boolean)propValue);
+		process_sound_state_((boolean)propValue);
+         //Tip sound processing
+       } else if (strcmp(propName, "Led_State") == 0) {
+ 		//ESP_LOGD("setting", "Led_State %u", (boolean)propValue);
+		process_led_enabled_((boolean)propValue);
+         //state.ledEnabled = (boolean)propValue;
+       } else if (strcmp(propName, "watertankstatus") == 0) {
+ 		//ESP_LOGD("setting", "watertankstatus %u", (boolean)propValue);
+		tank_installed->publish_state((boolean)propValue);
+         //Water tank installed
+       } else if (strcmp(propName, "waterstatus") == 0) {
+ 		//ESP_LOGD("setting", "waterstatus %u", !(boolean)propValue);
+		tank_empty->publish_state(!(boolean)propValue);
+         //Water tank empty
+       } else {
+         //Serial.print("Received unhandled prop: ");
+         //Serial.println(serialRxBuf);
+       }
+ 
+       clearRxBuf();
+       Serial.print("ok\r");
+ 
+     } else {
+       if (shouldUpdateState == true) { //This prevents a spam wave of state updates since we only send them after all prop updates have been received
+ 	   ESP_LOGD("logging", "publishState()");
+         //publishState();
+       }
+ 
+       shouldUpdateState = false;
+ 
+ 
+       if (strncmp (serialRxBuf, "get_down", 8) == 0) {
+         fillNextDownstreamMessage();
+         snprintf(serialTxBuf, sizeof(serialTxBuf), "down %s\r", nextDownstreamMessage);
+         Serial.print(serialTxBuf);
+ 
+ 
+         clearTxBuf();
+ 
+       } else if (strncmp(serialRxBuf, "net", 3) == 0) {
+         Serial.print("cloud\r");
+         /**
+            We need to always respond with cloud because otherwise the connection to the humidifier will break for some reason
+            Not sure why but it doesn't really matter
+ 
+           if (networkConnected == true) {
+ 
+           } else {
+ 
+           humidifierSerial.print("uap\r");
+           } **/
+ 
+       } else if (strncmp(serialRxBuf, "restore", 7) == 0) {
+		 ESP_LOGD("logging", "restore");
+         //resetWifiSettingsAndReboot();
+ 
+       } else if (
+         strncmp(serialRxBuf, "mcu_version", 11) == 0 ||
+         strncmp(serialRxBuf, "model", 5) == 0
+       ) {
+         Serial.print("ok\r");
+       } else if (strncmp(serialRxBuf, "event", 5) == 0) {
+         //Intentionally left blank
+         //We don't need to handle events, since we already get the prop updates
+       } else if (strncmp(serialRxBuf, "result", 6) == 0) {
+         //Serial.println(serialRxBuf);
+       } else {
+         //Serial.print("Received unhandled message: ");
+         //Serial.println(serialRxBuf);
+       }
+     }
+ 
+ 
+     clearRxBuf();
+   }
+ }
+// Process States
+// Power Status:
   void process_onoff_state_(bool state) {
     if (this->power) {
       this->power->publish_state(state);
     }
   }
+//LED status:
   void process_led_enabled_(bool state) {
     if (this->led) {
       this->led->publish_state(state);
     }
   }
-  void process_sound_enabled_(bool state) {
-    if (this->buzzer) {
-      this->buzzer->publish_state(state);
-    }
-  }  
- //Binary sensors:
-  void process_water_tank_empty_(bool state){
-	if (this->tank_empty) {
-	  this->tank_empty->publish_state(state);
-	}
-  }
-  void process_water_tank_status_(bool state){
-	if (this->tank_installed) {
-	  this->tank_installed->publish_state(state);
-	}
-  }  
- //Sensors:
-  void process_current_temperature_(int value){
-	if (this->temperature_sensor) {
-	  this->temperature_sensor->publish_state(value);
-	}
-  } 
-  void process_current_humidity_(int value){
-	if (this->humidity_sensor) {
-	  this->humidity_sensor->publish_state(value);
-	}
-  }  
- //Target mode
-  void process_humidifier_gear_(int value) {
-	switch (value)
-    {
-    case 1:
-      mode_select->publish_state("low");
-	  ESP_LOGD("logging", "Set_HumiValue %d", value);
-      break;
-	case 2:
-      mode_select->publish_state("medium");
-      break;
-	case 3:
-      mode_select->publish_state("high");
-      break;	
-	case 4:
-      mode_select->publish_state("Humidity");
-      break;
-	default:
-	  mode_select->publish_state("low");
-	  break;
+//Buzzer status:
+  void process_sound_state_(bool state) {
+    if (this->tip_sound) {
+      this->tip_sound->publish_state(state);
     }
   }
- //Humidity target value
-   void process_set_humidity_(int  value){
-	if (this->humidity_setpoint) {
-	  this->humidity_setpoint->publish_state(value);
-	}
-  }
+  
 };
  
 DeermaHumidifier &cast(Component *c) { return *reinterpret_cast<DeermaHumidifier *>(c); }

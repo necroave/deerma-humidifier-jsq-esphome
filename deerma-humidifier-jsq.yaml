@@ -12,7 +12,8 @@ esphome:
     - deerma_humidifier.h
 
 logger:
-  baud_rate: 0
+    level: DEBUG
+    baud_rate: 0
 
 # Enable Home Assistant API
 api:
@@ -37,45 +38,32 @@ captive_portal:
 
 uart:
   id: humidifier_uart
-  tx_pin: TX
-  rx_pin: RX
-  baud_rate: 9600
+  rx_pin: GPIO13
+  tx_pin: GPIO15
+  baud_rate: 115200
+  debug:
+   direction: both
+   dummy_receiver: false
+   sequence:
+     - lambda: UARTDebug::log_string(direction, bytes);   
 
 custom_component:
   lambda: |-
     auto dh = new DeermaHumidifier(id(humidifier_uart));
     dh->power = id(power);
     dh->led  = id(led_enabled);
-    dh->buzzer = id(sound_enabled);
-    dh->tank_empty = id(tank_status);
-    dh->tank_installed = id(tank_installed);
-    dh->humidity_sensor = id(humidity_sensor);
+    dh->tip_sound = id(sound_enabled);
     dh->temperature_sensor = id(temperature_sensor);
-    dh->mode_select = id(mode_select);
-    dh->humidity_setpoint = id(humidity_set);
+    dh->humidity_sensor = id(humidity_sensor);
+    dh->tank_empty = id(tank_empty);
+    dh->tank_installed = id(tank_installed);
     return {dh};
   components:
     - id: humidifier
 
-binary_sensor:
-  - platform: template
-    name: "Water Status"
-    id: tank_status
-    icon: mdi:chart-waterfall
-  - platform: template
-    name: "Tank Status"
-    id: tank_installed
-    icon: mdi:cup-water
-
-sensor:
-  - platform: template
-    name: "$name Temperature"
-    id: temperature_sensor
-  - platform: template
-    name: "$name Humidity"
-    id: humidity_sensor
-    
+#Controllable Switches:
 switch:
+  # Power status
   - platform: template
     id: power
     name: "$name State"
@@ -84,6 +72,7 @@ switch:
       - lambda: cast(id(humidifier)).set_power_state(true);
     turn_off_action:
       - lambda: cast(id(humidifier)).set_power_state(false);
+  # Led Status
   - platform: template
     id: led_enabled
     name: "$name Led"
@@ -92,6 +81,7 @@ switch:
       - lambda: cast(id(humidifier)).set_led_state(true);
     turn_off_action:
       - lambda: cast(id(humidifier)).set_led_state(false);
+  # Tip sound status
   - platform: template
     id: sound_enabled
     name: "$name Sound"
@@ -101,30 +91,26 @@ switch:
     turn_off_action:
       - lambda: cast(id(humidifier)).set_sound_state(false);
       
-select:
+#Humidity and temperature sensors:
+sensor:
   - platform: template
-    name: "$name Working Mode"
-    optimistic: true
-    id: mode_select
-    options:
-      - low
-      - medium
-      - high
-      - Humidity
-    on_value:
-      then:
-        - lambda: cast(id(humidifier)).set_humidifier_mode(x.c_str());
-
-
-number:
+    name: "$name Temperature"
+    id: temperature_sensor
+    unit_of_measurement: "°C"
+    device_class: "temperature"
   - platform: template
-    name: "$name Set Humidity"
-    id: humidity_set
-    optimistic: true
-    min_value: 0
-    max_value: 100
-    step: 10
-    on_value:
-      then:
-        - lambda: cast(id(humidifier)).set_humidity_target(x);
-    
+    name: "$name Humidity"
+    id: humidity_sensor 
+    unit_of_measurement: "%	"
+    device_class: "humidity"
+
+#Binary sensors:   
+binary_sensor:
+  - platform: template
+    name: "$name Water Tank Empty"
+    id: tank_empty
+    icon: mdi:water-alert
+  - platform: template
+    name: "$name Water Tank Present"
+    id: tank_installed
+    icon: mdi:water-alert    
