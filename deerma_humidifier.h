@@ -3,10 +3,10 @@
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/components/switch/switch.h"
-//#include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"
-//#include "esphome/components/select/select.h"
-//#include "esphome/components/number/number.h"
+#include "esphome/components/select/select.h"
+#include "esphome/components/number/number.h"
 #include "esphome/core/helpers.h"
 
 #include <queue>
@@ -14,10 +14,10 @@
 using namespace esphome;
 using namespace esphome::uart;
 using namespace esphome::switch_;
-//using namespace esphome::binary_sensor;
-//using namespace esphome::sensor;
-//using namespace esphome::select;
-//using namespace esphome::number;
+using namespace esphome::binary_sensor;
+using namespace esphome::sensor;
+using namespace esphome::select;
+using namespace esphome::number;
 
 
 class DeermaHumidifier : public Component, public UARTDevice {
@@ -39,6 +39,10 @@ class DeermaHumidifier : public Component, public UARTDevice {
   //binary_sensors:
   BinarySensor *tank_empty{};
   BinarySensor *tank_installed{};
+  //Mode Selection:
+  Select *mode_select;
+  //Humidity Setpoint:
+  Number *humidity_setpoint{};
   
   void send_network_status() { 
    queueDownstreamMessage("MIIO_net_change cloud"); 
@@ -81,6 +85,38 @@ class DeermaHumidifier : public Component, public UARTDevice {
 		queueDownstreamMessage("SetTipSound_Status 0");
 	}
  }
+ //Process Humidifier Selection
+  void set_humidifier_mode(const char *state) {
+    if (strcmp(state, "Low") == 0) {
+	queueDownstreamMessage("Set_HumidifierGears 1");
+	} else if (strcmp(state, "Medium") == 0) {
+	queueDownstreamMessage("Set_HumidifierGears 2");	
+	} else if (strcmp(state, "High") == 0) {
+	queueDownstreamMessage("Set_HumidifierGears 3");	
+	} else if (strcmp(state, "Humidity") == 0) {
+	queueDownstreamMessage("Set_HumidifierGears 4");
+	}
+  } 
+ //Setting Humidity Value 
+  void set_humidity_target(int state) {
+    char humiditySetpointMsg[40];
+    memset(humiditySetpointMsg, 0, sizeof(humiditySetpointMsg));
+  
+    if (state < 0) {
+      state = 0;
+    } else if (state > 99) {
+      state = 99;
+    }
+  
+  
+    snprintf(humiditySetpointMsg, sizeof(humiditySetpointMsg), "Set_HumiValue %d", state);
+  
+    queueDownstreamMessage(humiditySetpointMsg);
+  
+    //This is required since we not always receive a prop update when setting this
+    humidity_setpoint->publish_state((int)state);
+  
+  } 
 
 // protected:
 //  int rx_pos_{};
@@ -163,11 +199,13 @@ class DeermaHumidifier : public Component, public UARTDevice {
 		process_onoff_state_((boolean)propValue);
         //ON-OFF state processing
        } else if (strcmp(propName, "Humidifier_Gear") == 0) {
- 		ESP_LOGD("logging", "Humidifier_Gear %u", (int)propValue);
-         //state.mode = (humMode_t)propValue;
+ 		//ESP_LOGD("processing", "Humi_Gear %u", (int)propValue);
+		process_humidifier_gear_((int)propValue);
+         //Processing humidifier selector
        } else if (strcmp(propName, "HumiSet_Value") == 0) {
  		ESP_LOGD("logging", "HumiSet_Value %u", (int)propValue);
-         //state.humiditySetpoint = propValue;
+		humidity_setpoint->publish_state((int)propValue);
+         //Humidifier Setpoint
        } else if (strcmp(propName, "Humidity_Value") == 0) {
  		//ESP_LOGD("setting", "Humidity_Value %u", (int)propValue);
 		humidity_sensor->publish_state((int)propValue);
@@ -183,7 +221,7 @@ class DeermaHumidifier : public Component, public UARTDevice {
        } else if (strcmp(propName, "Led_State") == 0) {
  		//ESP_LOGD("setting", "Led_State %u", (boolean)propValue);
 		process_led_enabled_((boolean)propValue);
-         //state.ledEnabled = (boolean)propValue;
+         //Led status processing
        } else if (strcmp(propName, "watertankstatus") == 0) {
  		//ESP_LOGD("setting", "watertankstatus %u", (boolean)propValue);
 		tank_installed->publish_state((boolean)propValue);
@@ -273,7 +311,24 @@ class DeermaHumidifier : public Component, public UARTDevice {
       this->tip_sound->publish_state(state);
     }
   }
-  
+//Target humidifier mode  
+  void process_humidifier_gear_(int value) {
+	switch (value)
+    {
+    case 1:
+      mode_select->publish_state("Low");
+	  break;
+	case 2:
+      mode_select->publish_state("Medium");
+	  break;
+	case 3:
+      mode_select->publish_state("High");
+	  break;	
+	case 4:
+      mode_select->publish_state("Humidity");
+	  break;
+    }
+  }  
 };
  
 DeermaHumidifier &cast(Component *c) { return *reinterpret_cast<DeermaHumidifier *>(c); }

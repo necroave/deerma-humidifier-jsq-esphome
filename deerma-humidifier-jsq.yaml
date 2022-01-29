@@ -57,6 +57,8 @@ custom_component:
     dh->humidity_sensor = id(humidity_sensor);
     dh->tank_empty = id(tank_empty);
     dh->tank_installed = id(tank_installed);
+    dh->mode_select = id(mode_select);
+    dh->humidity_setpoint = id(humidity_setpoint);
     return {dh};
   components:
     - id: humidifier
@@ -113,4 +115,30 @@ binary_sensor:
   - platform: template
     name: "$name Water Tank Present"
     id: tank_installed
-    icon: mdi:water-alert    
+    icon: mdi:water-boiler   
+
+#Mode selection
+select:
+  - platform: template
+    name: "$name Working Mode"
+    id: mode_select
+    options:
+      - Low
+      - Medium
+      - High
+      - Humidity
+    set_action:
+      then:
+        - lambda: cast(id(humidifier)).set_humidifier_mode(x.c_str());
+#Humidifier Setpoint
+number:
+  - platform: template
+    name: "$name Set Humidity"
+    id: humidity_setpoint
+    #optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 10
+    set_action:
+      then:
+        - lambda: cast(id(humidifier)).set_humidity_target(x);        
